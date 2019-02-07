@@ -1,0 +1,8 @@
+This is the repository for the Wine Quality Prediction project for the EDX Professional Certificate in Data Science. It contains the following files:
+1. winequality_report.Rmd
+2. winequality_report.pdf
+3. winequality_prediction.R
+4. winequality-red.csv
+5. winequality-white.csv
+
+The data source is the Wine Quality dataset in the UCI Machine Learning Repository. The csv files contain the quality ratings (1-10) of red and white varieties of the Portuguese "Vinho Verde" wine. The variable predictors are physicochemical properties of the wine samples. Several models were built for the prediction of the quality using Principal Component Analysis, Support Vector Machines, and Random Forests.
