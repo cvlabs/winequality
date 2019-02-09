@@ -1,0 +1,570 @@
+---
+title: "Wine Quality Prediction"
+author: "Claudia Valdeavella"
+date: "7 February 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introduction
+
+The data for this project are the wine quality datasets^1^ from the UCI Machine Learning Repository. The observations were gathered from wine samples of red and white variants of the Portuguese "Vinho Verde" wine. The inputs are objective tests and the output is based on sensory data, that is, the median of at least 3 evaluations made by wine experts. Each wine expert graded the wine quality anywhere from 0 (very bad) to 10 (excellent).
+
+The objective of this project is to predict the quality of the wine, which is a score between 0 and 10, based on the following attributes
+
+* fixed acidity
+* volatile acidity
+* citric acid
+* residual sugar
+* chlorides
+* free sulfur dioxide
+* total sulfur dioxide
+* density
+* pH
+* sulphates
+* alcohol
+   
+This is a multiclass classification problem. The author will apply Principal Component Analysis (PCA), Support Vector Machines (SVM), and Random Forests (RF) to the datasets. Separate models will be built for the red and white variants.
+
+# Analysis
+
+```{r libraries, include=FALSE}
+# load the required libraries
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(ggpubr)) install.packages("ggpubr", repos = "http://cran.us.r-project.org")
+if(!require(PerformanceAnalytics)) install.packages("PerformanceAnalytics", repos = "http://cran.us.r-project.org")
+# svm is in the e1071 package
+if(!require(e1071)) install.packages("e1071", repos = "http://cran.us.r-project.org")
+# Rborist is the accelerated implementation of the Random Forest algorithm
+if(!require(Rborist)) install.packages("Rborist", repos = "http://cran.us.r-project.org")
+```
+```{r utilities, include=FALSE}
+
+ACCURACY <- function(true_ratings, predicted_ratings) {
+  mean(true_ratings == predicted_ratings)
+}
+
+```
+
+```{r input, include=FALSE}
+# read data files
+red <- read.csv('winequality-red.csv')
+white <- read.csv('winequality-white.csv')
+
+# split into training and test sets
+# separate into training (0.9) and test (0.1) sets
+set.seed(1)
+test_r_index <- createDataPartition(y = red$quality, times = 1, p = 0.1, list = FALSE)
+red_train <- red[-test_r_index,]
+red_test <- red[test_r_index,]
+# scale the data before modeling 
+X_train_red <- scale(red_train[, 1:11])
+y_train_red <- red_train[, 12]
+X_test_red <- scale(red_test[, 1:11])
+y_test_red <- red_test[, 12]
+# repeat the procedure for the white wine data
+set.seed(1)
+test_w_index <- createDataPartition(y = white$quality, times = 1, p = 0.1, list = FALSE)
+white_train <- white[-test_w_index,]
+white_test <- white[test_w_index,]
+
+X_train_white <- scale(white_train[, 1:11])
+y_train_white <- white_train[, 12]
+X_test_white <- scale(white_test[, 1:11])
+y_test_white <- white_test[, 12]
+
+```
+
+We will start our analysis by examining the range of values of each of the variables. The summary for the red wine dataset is shown below.
+
+```{r summary_red, echo=FALSE}
+summary(red)
+```
+
+Similary, we obtain the following summary for the white wine dataset.
+
+```{r summary_white, echo=FALSE}
+summary(white)
+```
+
+From the above summaries of the data, we observe that there is a wide range in the values of the variables, the total sulfur dioxides are in the hundreds while the chlorides are in the order of 0.01, hence it is necessary to scale the values prior to creating the models. There are no missing values in the datasets.
+
+```{r missing_values, include=FALSE}
+any(is.na(red))
+any(is.na(white))
+```
+
+\pagebreak
+
+Next we observe that there is an imbalance in the quality of the wines, that is, majority of the wine samples are average in quality. Few excellent or poor quality wines are included in the dataset.
+
+```{r quality_dist, echo=FALSE}
+red_train$wine_type <- "red"
+white_train$wine_type <- "white"
+full_train <- rbind(red_train, white_train)
+
+sp <- ggplot() + 
+  geom_histogram(data=full_train, aes(quality), binwidth=1)
+sp + facet_grid(wine_type ~ .) + ggtitle("distribution of wine quality") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+\pagebreak
+
+Prior to modeling, we will examine how the wine quality varies with each predictor variable.
+
+```{r red_var_1, fig.width=6.5, fig.height=8, echo=FALSE}
+red_box_1 <- red_train %>% ggplot(aes(x=quality, y=fixed.acidity, group=quality)) + geom_boxplot()
+
+red_box_2 <- red_train %>% ggplot(aes(x=quality, y=volatile.acidity, group=quality)) + geom_boxplot()
+
+red_box_3 <- red_train %>% ggplot(aes(x=quality, y=citric.acid, group=quality)) + geom_boxplot()
+
+red_box_4 <- red_train %>% ggplot(aes(x=quality, y=residual.sugar, group=quality)) + geom_boxplot()
+
+red_box_5 <- red_train %>% ggplot(aes(x=quality, y=chlorides, group=quality)) + geom_boxplot()
+
+red_box_6 <- red_train %>% ggplot(aes(x=quality, y=free.sulfur.dioxide, group=quality)) + geom_boxplot()
+
+red_box_7 <- red_train %>% ggplot(aes(x=quality, y=total.sulfur.dioxide, group=quality)) + geom_boxplot()
+
+red_box_8 <- red_train %>% ggplot(aes(x=quality, y=density, group=quality)) + geom_boxplot()
+
+red_box_9 <- red_train %>% ggplot(aes(x=quality, y=pH, group=quality)) + geom_boxplot()
+
+red_box_10 <- red_train %>% ggplot(aes(x=quality, y=sulphates, group=quality)) + geom_boxplot()
+
+red_box_11 <- red_train %>% ggplot(aes(x=quality, y=alcohol, group=quality)) + geom_boxplot()
+
+figure_red_grid <- ggarrange(red_box_1, red_box_2, red_box_3, red_box_4, red_box_5, red_box_6, red_box_7, red_box_8, red_box_9, red_box_10, red_box_11, ncol=3, nrow=4)
+
+annotate_figure(figure_red_grid,
+                top = text_grob("physicochemical properties vs red wine quality", color = "black", face = "bold", size = 14))
+```
+
+For red wines, the levels of alcohol, citric acid and sulfates are higher in excellent wine samples. In contrast, volatile acidity, density and pH levels are lower in excellent samples.
+
+\pagebreak
+
+For white wines, the alcohol levels are high in excellent wine samples. Besides the trend in alcohol levels, we don't observe clear trends in the other variables.
+
+```{r white_var_1, fig.width=6.5, fig.height=8, echo=FALSE}
+white_box_1 <- white_train %>% ggplot(aes(x=quality, y=fixed.acidity, group=quality)) + geom_boxplot()
+
+white_box_2 <- white_train %>% ggplot(aes(x=quality, y=volatile.acidity, group=quality)) + geom_boxplot()
+
+white_box_3 <- white_train %>% ggplot(aes(x=quality, y=citric.acid, group=quality)) + geom_boxplot()
+
+white_box_4 <- white_train %>% ggplot(aes(x=quality, y=residual.sugar, group=quality)) + geom_boxplot()
+
+white_box_5 <- white_train %>% ggplot(aes(x=quality, y=chlorides, group=quality)) + geom_boxplot()
+
+white_box_6 <- white_train %>% ggplot(aes(x=quality, y=free.sulfur.dioxide, group=quality)) + geom_boxplot()
+
+white_box_7 <- white_train %>% ggplot(aes(x=quality, y=total.sulfur.dioxide, group=quality)) + geom_boxplot()
+
+white_box_8 <- white_train %>% ggplot(aes(x=quality, y=density, group=quality)) + geom_boxplot()
+
+white_box_9 <- white_train %>% ggplot(aes(x=quality, y=pH, group=quality)) + geom_boxplot()
+
+white_box_10 <- white_train %>% ggplot(aes(x=quality, y=sulphates, group=quality)) + geom_boxplot()
+
+white_box_11 <- white_train %>% ggplot(aes(x=quality, y=alcohol, group=quality)) + geom_boxplot()
+
+figure_white_grid <- ggarrange(white_box_1, white_box_2, white_box_3, white_box_4, white_box_5, white_box_6, white_box_7, white_box_8, white_box_9, white_box_10, white_box_11, ncol=3, nrow=4)
+
+annotate_figure(figure_white_grid,
+                top = text_grob("physicochemical properties vs white wine quality", color = "black", face = "bold", size = 14))
+```
+
+\pagebreak
+
+Are there correlations among the 11 predictor variables? If so, is it possible to reduce the dimensionality of the problem?
+
+In the red wine dataset, we see from the following plot that certain pairs of variables are highly correlated, fixed acidity and citric acid, free sulfur dioxide and total sulfur dioxide, and fixed acidity and pH, to name a few.
+
+```{r corr_plots_red, echo=FALSE}
+suppressWarnings(chart.Correlation(X_train_red, histogram=TRUE, pch=19, main="red wine variable correlations"))
+```
+
+\pagebreak
+
+We see high correlations between pairs of variables in the white wine dataset also. Examine the correlations between residual sugar and density, density and alcohol, and free sulur dioxide and total sulfur dioxide.
+
+```{r corr_plots_white, echo=FALSE}
+suppressWarnings(chart.Correlation(X_train_white, histogram=TRUE, pch=19, main="white wine variable correlations"))
+```
+
+In this project, separate models were built for the red and white wines because the quality ratings are based on sensory data, that is, ratings by wine experts, and the author thinks that, in general, expectations are different for red and white wines.
+
+\pagebreak
+
+## Principal Component Analysis
+
+When faced with a large set of correlated variables, PCA allows us to summarize this set with a smaller number of representative variables that explain most of the variability in the original set. Each of the principal components found by PCA is a direction in feature space which is a linear combination of the original features, 11 in the wine quality datasets. These are ordered such that the first principal component has the largest variance.
+
+The contribution of each of the principal components to the variance in the data can be gleaned from the following graphs.
+
+```{r pca, echo=FALSE}
+pca_red <- prcomp(red_train[, 1:11], scale=TRUE)
+var_explained_red <- cumsum(pca_red$sdev^2/sum(pca_red$sdev^2))
+
+pca_white <- prcomp(white_train[, 1:11], scale=TRUE)
+var_explained_white <- cumsum(pca_white$sdev^2/sum(pca_white$sdev^2))
+
+varex_red_df <- data.frame(varex=var_explained_red, wine_type="red")
+varex_red_df <- mutate(varex_red_df, id = as.numeric(rownames(varex_red_df)))
+
+varex_white_df <- data.frame(varex=var_explained_white, wine_type="white")
+varex_white_df <- mutate(varex_white_df, id = as.numeric(rownames(varex_white_df)))
+
+varex_full <- rbind(varex_red_df, varex_white_df)
+
+ggplot() + geom_point(data=varex_full, aes(x=id, y=varex)) + geom_line(data=varex_full, aes(x=id, y=varex)) + 
+  facet_grid(wine_type ~ .) + 
+  labs(x="principal component", y="cumulative sum of proportion of variance explained") +
+  scale_x_continuous(breaks=seq(1,11,1))
+```
+
+From the above analysis, we see that we need PC1 through PC8 to account up to 95% and PC1 through PC10 to account up to 99% of the variance in the data. A similar analysis of the white wine dataset reveals that PC1 through PC8 accounts for up to 93% and PC1 through PC10 accounts for up to 99.8%
+of the variance in the dataset. Given the observed behavior, it doesn't seem like PCA will allow us to reduce the dimensionality of the problem by much in both the red and white wine datasets.
+
+We will use three approaches for our multiclass classification problem
+
+* SVM 
+* PCA + SVM
+* Random Forests
+
+SVM classifies data by constructing hyperplanes in multidimensional space that separates observations according to their class labels. It can be applied to nonlinear data distributions with the use of kernels. These are essentially mathematical functions that map the data to higher dimensions where they will hopefully be linearly separable. 
+
+In the second approach, we use the principal components as the predictors in the SVM model in place of the original variables.
+
+The third approach, Random Forests, involves producing multiple decision trees that are then combined to yield a single consensus prediction. The use of a large number of trees improve prediction accuracy.
+
+## Support Vector Machines 
+
+SVM analysis for the red and white wine datasets involved the following steps
+
+1. Tune nonlinear SVM using 10-fold cross validation to find the best values for the cost and gamma parameters 
+2. Build the model using the training set and the best estimates for cost and gamma
+3. Apply the model to the test set to predict the quality
+
+```{r svm_red, include=FALSE}
+# SVM for Red Wine data
+# tune the cost and gamma parameters for nonlinear svm
+set.seed(100)
+svm_tune_nonlin_red <- tune(svm, train.x=X_train_red, train.y=y_train_red, 
+              kernel="radial", ranges=list(cost=10^(-1:2), gamma=c(.5,1,2)))
+
+bestCost <- svm_tune_nonlin_red$best.parameters$cost
+bestGamma <- svm_tune_nonlin_red$best.parameters$gamma
+# build the model, have svm scale the data prior to building the model
+svmfit_nonlin_red <- svm(red_train[,1:11], as.factor(y_train_red), kernel= "radial",  cost=bestCost, gamma=bestGamma, scale=TRUE, probabilities="TRUE")
+
+# predict the quality of the wine samples in the test set
+svm_nonlin_pred_red <- predict(svmfit_nonlin_red, red_test[,1:11], scale=TRUE, probabilities = TRUE)
+
+# create the confusion matrix
+# use the table() function to create the confusion matrix because some of the levels are not populated in test set
+
+table(svm_nonlin_pred_red, y_test_red)
+
+# calculate the accuracy
+svm_11var_acc_red <- ACCURACY(y_test_red, svm_nonlin_pred_red)
+```
+
+
+```{r svm_white, include=FALSE}
+# SVM for White Wine data
+# tune the cost and gamma parameters for nonlinear svm
+set.seed(100)
+svm_tune_nonlin_white <- tune(svm, train.x=X_train_white, train.y=y_train_white, 
+              kernel="radial", ranges=list(cost=10^(-1:2), gamma=c(.5,1,2)))
+
+bestCost <- svm_tune_nonlin_white$best.parameters$cost
+bestGamma <- svm_tune_nonlin_white$best.parameters$gamma
+# build the model, have svm scale the data prior to building the model
+svmfit_nonlin_white <- svm(white_train[,1:11], as.factor(y_train_white), kernel= "radial",  cost=bestCost, gamma=bestGamma, scale=TRUE, probabilities="TRUE")
+
+# predict the quality of the wine samples in the test set
+svm_nonlin_pred_white <- predict(svmfit_nonlin_white, white_test[,1:11], scale=TRUE, probabilities = TRUE)
+
+# create the confusion matrix
+table(svm_nonlin_pred_white, y_test_white)
+
+# calculate the accuracy
+svm_11var_acc_white <-ACCURACY(y_test_white, svm_nonlin_pred_white)
+```
+
+## PCA+SVM
+
+The second approach that was pursued is a combination of PCA and SVM, that is, subsets of the principal component vectors were used as variables for the SVM model.
+
+The rationale for doing this is two-fold. Pre-processing the data with PCA
+
+* reduces the dimensionality of the data
+* removes correlations between the predictors
+
+both of which are expected to facilitate the downstream SVM analysis.
+
+Models were built for the red wine data, first using PC1-PC8, then using PC1-PC10. These vectors accounted for 95% and 99%, respectively, for the variance in the data as observed previously. For the white wine dataset, recall that PC1-PC8 accounts for 95% and PC1-PC10 accounts for 99.8% for the variance in the data set. 
+
+The first step is the projection of the observations in the training and test sets onto the principal component vectors. The rest of the steps are as described in the previous section for SVM.
+
+```{r pca_red_rotation8, include=FALSE}
+# Red Wine projection of observations in the training and test sets onto the principal component vectors (PC1-PC8)
+# Train set from PCA
+red_train_pca_8 <- as.matrix(X_train_red[, 1:11]) %*% pca_red$rotation[, 1:8]
+red_train_pca_8 <- as.data.frame(red_train_pca_8)
+colnames(red_train_pca_8) <- paste("PC_", 1:8, sep="")
+
+# Test set from PCA
+red_test_pca_8 <- as.matrix(X_test_red[, 1:11]) %*% pca_red$rotation[, 1:8]
+red_test_pca_8 <- as.data.frame(red_test_pca_8)
+colnames(red_test_pca_8) <- paste("PC_", 1:8, sep="")    
+```
+
+
+
+```{r svm_red8, include=FALSE}
+# Red Wine SVM analysis with 8 principal component vectors
+# tune the cost and gamma parameters
+set.seed(100)
+svm_tune_nonlin_red_8 <- tune(svm, train.x=red_train_pca_8, train.y=y_train_red, 
+              kernel="radial", ranges=list(cost=10^(-1:2), gamma=c(.5,1,2)))
+
+bestCost <- svm_tune_nonlin_red_8$best.parameters$cost
+bestGamma <- svm_tune_nonlin_red_8$best.parameters$gamma
+# build the model using the best parameter estimates
+svmfit_nonlin_red_8 <- svm(red_train_pca_8, as.factor(y_train_red), kernel= "radial",  cost=bestCost, gamma=bestGamma, scale=TRUE, probabilities="TRUE")
+
+# predict the wine quality
+svm_nonlin_pred_red_8 <- predict(svmfit_nonlin_red_8, red_test_pca_8, scale=TRUE, probabilities = TRUE)
+
+# create the confusion matrix
+table(svm_nonlin_pred_red_8, y_test_red)
+
+# calculate the accuracy
+pca8_svm_red_acc <- ACCURACY(y_test_red, svm_nonlin_pred_red_8)
+```
+
+
+```{r pca_white_rotation8, include=FALSE}
+# White Wine projection of observations in the training and test sets onto the principal component vectors (PC1-PC8)
+# Train set from PCA
+white_train_pca_8 <- as.matrix(X_train_white[, 1:11]) %*% pca_white$rotation[, 1:8]
+white_train_pca_8 <- as.data.frame(white_train_pca_8)
+colnames(white_train_pca_8) <- paste("PC_", 1:8, sep="")
+
+# Test set from PCA
+white_test_pca_8 <- as.matrix(X_test_white[, 1:11]) %*% pca_white$rotation[, 1:8]
+white_test_pca_8 <- as.data.frame(white_test_pca_8)
+colnames(white_test_pca_8) <- paste("PC_", 1:8, sep="") 
+```
+
+
+```{r svm_white8, include=FALSE}
+# White Wine SVM analysis with 8 principal component vectors
+# tune the cost and gamma parameters
+set.seed(100)
+svm_tune_nonlin_white_8 <- tune(svm, train.x=white_train_pca_8, train.y=y_train_white, 
+              kernel="radial", ranges=list(cost=10^(-1:2), gamma=c(.5,1,2)))
+
+bestCost <- svm_tune_nonlin_white_8$best.parameters$cost
+bestGamma <- svm_tune_nonlin_white_8$best.parameters$gamma
+# build the model using the best estimates for cost and gamma
+svmfit_nonlin_white_8 <- svm(white_train_pca_8, as.factor(y_train_white), kernel= "radial",  cost=bestCost, gamma=bestGamma, scale=TRUE, probabilities="TRUE")
+
+# make predictions for the test data
+svm_nonlin_pred_white_8 <- predict(svmfit_nonlin_white_8, white_test_pca_8, scale=TRUE, probabilities = TRUE)
+
+
+# create the confusion matrix
+table(svm_nonlin_pred_white_8, y_test_white)
+
+# calculate the accuracy
+pca8_svm_white_acc <- ACCURACY(y_test_white, svm_nonlin_pred_white_8)
+```
+
+
+```{r pca_red_rotation10, include=FALSE}
+# Red Wine projection of observations in the training and test sets onto the principal component vectors (PC1-PC10)
+# Train set from PCA
+red_train_pca_10 <- as.matrix(X_train_red[, 1:11]) %*% pca_red$rotation[, 1:10]
+red_train_pca_10 <- as.data.frame(red_train_pca_10)
+colnames(red_train_pca_10) <- paste("PC_", 1:10, sep="")
+
+# Test set from PCA
+red_test_pca_10 <- as.matrix(X_test_red[, 1:11]) %*% pca_red$rotation[, 1:10]
+red_test_pca_10 <- as.data.frame(red_test_pca_10)
+colnames(red_test_pca_10) <- paste("PC_", 1:10, sep="")    
+```
+
+
+```{r svm_red10, include=FALSE}
+# Red Wine SVM analysis with 10 principal component vectors
+# tune the cost and gamma parameters
+set.seed(100)
+svm_tune_nonlin_red_10 <- tune(svm, train.x=red_train_pca_10, train.y=y_train_red, 
+              kernel="radial", ranges=list(cost=10^(-1:2), gamma=c(.5,1,2)))
+
+bestCost <- svm_tune_nonlin_red_10$best.parameters$cost
+bestGamma <- svm_tune_nonlin_red_10$best.parameters$gamma
+# build the model using the best parameter estimates
+svmfit_nonlin_red_10 <- svm(red_train_pca_10, as.factor(y_train_red), kernel= "radial",  cost=bestCost, gamma=bestGamma, scale=TRUE, probabilities="TRUE")
+
+# predict the quality for the test data
+svm_nonlin_pred_red_10 <- predict(svmfit_nonlin_red_10, red_test_pca_10, scale=TRUE, probabilities = TRUE)
+
+# create the confusion matrix
+table(svm_nonlin_pred_red_10, y_test_red)
+
+# calculate the accuracy
+pca10_svm_red_acc <- ACCURACY(y_test_red, svm_nonlin_pred_red_10)
+```
+
+
+```{r pca_white_rotation10, include=FALSE}
+# White Wine projection of observations in the training and test sets onto the principal component vectors (PC1-PC10)
+# Train set from PCA
+white_train_pca_10 <- as.matrix(X_train_white[, 1:11]) %*% pca_white$rotation[, 1:10]
+white_train_pca_10 <- as.data.frame(white_train_pca_10)
+colnames(white_train_pca_10) <- paste("PC_", 1:10, sep="")
+
+# Test set from PCA
+white_test_pca_10 <- as.matrix(X_test_white[, 1:11]) %*% pca_white$rotation[, 1:10]
+white_test_pca_10 <- as.data.frame(white_test_pca_10)
+colnames(white_test_pca_10) <- paste("PC_", 1:10, sep="") 
+```
+
+
+
+```{r svm_white10, include=FALSE}
+# White Wine SVM analysis with 10 principal component vectors
+# tune the cost and gamma parameters
+set.seed(100)
+svm_tune_nonlin_white_10 <- tune(svm, train.x=white_train_pca_10, train.y=y_train_white, 
+              kernel="radial", ranges=list(cost=10^(-1:2), gamma=c(.5,1,2)))
+
+bestCost <- svm_tune_nonlin_white_10$best.parameters$cost
+bestGamma <- svm_tune_nonlin_white_10$best.parameters$gamma
+# build the model using the best parameter estimates
+svmfit_nonlin_white_10 <- svm(white_train_pca_10, as.factor(y_train_white), kernel= "radial",  cost=bestCost, gamma=bestGamma, scale=TRUE, probabilities="TRUE")
+
+# predict the quality of the test set 
+svm_nonlin_pred_white_10 <- predict(svmfit_nonlin_white_10, white_test_pca_10, scale=TRUE, probabilities = TRUE)
+
+# create the confusion matrix
+table(svm_nonlin_pred_white_10, y_test_white)
+
+# calculate the accuracy
+pca10_svm_white_acc <- ACCURACY(y_test_white, svm_nonlin_pred_white_10)
+```
+
+## Random Forests
+
+As in the previous sections of this report, the red wine dataset was analyzed followed by the white wine dataset.
+
+The following parameters were tuned for this model
+
+* nTree is the number of trees to grow
+* predFixed is the number of randomly selected parameters for splitting
+* minNode is the minimal node size
+
+These were tuned using the train() function and the Rborist package. After tuning the parameters, the model was used to predict the quality of the wine samples in the test set. Based on the following accuracy values obtained during the training, we used 700 trees for subsequent analysis steps.
+
+```{r rf_tune, echo=FALSE}
+tree_pars <- data.frame(nTree=500, predFixed=2, minNode=5, red=0.6514, white=0.6387)
+tree_pars <- bind_rows(tree_pars,
+                          data_frame(nTree=700, predFixed=2, minNode=5, red=0.6641, white=0.6389))
+tree_pars <- bind_rows(tree_pars,
+                          data_frame(nTree=1000, predFixed=2, minNode=5, red=0.6630, white=0.6384))
+tree_pars %>% knitr::kable()
+```
+
+
+```{r tune_rf_red, include=FALSE}
+# Red Wine analysis using Random Forests
+# tune parameters
+set.seed(100)
+red_rf <- train(red_train[,1:11], nTree=700, as.factor(y_train_red), method="Rborist", preProcess = c("scale"), tuneGrid=data.frame(predFixed=seq(2,11,1), minNode=seq(5,250,25)))
+
+# make predictions for the test data
+red_rf_pred_raw <- predict(red_rf, red_test[,1:11], as.factor(y_test_red), type="raw")
+
+# calculate accuracy
+rf_red_acc<- ACCURACY(y_test_red, red_rf_pred_raw)
+```
+
+
+```{r tune_rf_white, include=FALSE}
+# White Wine analysis using Random Forests
+# tune parameters
+set.seed(100)
+white_rf <- train(white_train[,1:11], nTree=700, as.factor(y_train_white), method="Rborist", preProcess = c("scale"), tuneGrid=data.frame(predFixed=seq(2,11,1), minNode=seq(5,250,25)))
+
+# make predictions for the test set
+white_rf_pred_raw <- predict(white_rf, white_test[,1:11], as.factor(y_test_white), type="raw")
+
+# calculate accuracy
+rf_white_acc<- ACCURACY(y_test_white, white_rf_pred_raw)
+```
+
+# Results
+
+The author used accuracy as the metric in evaluating the models. A comparison of the results from the different models is shown in the following table
+
+```{r tab_acc, echo=FALSE}
+# round accuracy values to 4 digits
+svm_11var_acc_red <- round(svm_11var_acc_red, digits=4)
+svm_11var_acc_white <- round(svm_11var_acc_white, digits=4)
+pca8_svm_red_acc <- round(pca8_svm_red_acc, digits=4)
+pca8_svm_white_acc <- round(pca8_svm_white_acc, digits=4)
+pca10_svm_red_acc <- round(pca10_svm_red_acc, digits=4)
+pca10_svm_white_acc <- round(pca10_svm_white_acc, digits=4)
+rf_red_acc <- round(rf_red_acc, digits=4)
+rf_white_acc <- round(rf_white_acc, digits=4)
+
+# build a table
+accuracy_results <- data_frame(method = "svm 11 var", red = svm_11var_acc_red, white = svm_11var_acc_white)
+accuracy_results <- bind_rows(accuracy_results,
+                          data_frame(method="pca (1-8) + SVM",  
+                                     red = pca8_svm_red_acc, white = pca8_svm_white_acc))
+accuracy_results <- bind_rows(accuracy_results,
+                          data_frame(method="pca (1-10) + SVM",  
+                                     red = pca10_svm_red_acc, white = pca10_svm_white_acc))
+accuracy_results <- bind_rows(accuracy_results,
+                          data_frame(method="random forests",  
+                                     red = rf_red_acc, white = rf_white_acc))
+accuracy_results %>% knitr::kable()
+```
+
+The SVM model and the Random Forests model predicted the quality of the red wine samples with equal accuracy (0.7081), but the combination of PCA and SVM gave the most accurate prediction (0.6878) for the white wine samples.
+
+For the white wine data, combining PCA and SVM gives better results than SVM alone. This is a consequence of the modeling being done in the transformed space where the predictor varibles (the principal components) are orthogonal to each other.
+
+Including more principal components into the subsequent SVM model increased the accuracy of the prediction. This is the expected behavior for this dataset because we knew from the PCA analysis that the PC9 and PC10 principal components still have significant contributions to the variance in the data. 
+
+According to the literature, correlations among the predictor variables can be handled by the use of custom kernels within SVM. This would render the use of principal components unnecessary. 
+
+The author did not use principal components in conjunction with Random Forests. The rationale is that Random Forests is a correlation robust algorithm, hence, pre-processing the data to remove correlations is not necessary prior to modeling.
+
+One distinctive feature of the datasets in this project is the imbalance in the distribution of the samples into the classes. There are very few excellent wines or really poor quality wines. The lack of samples at the two extremes means that there isn't enough data from which to discern the pattern that makes for an excellent wine, for example.
+
+The author noted that some analyses of the red wine dataset published on the web simplified the classification problem by binning the observations into 3 groups (bad, average, or good wine) instead of the 0-10 quality rating. The accuracy in this case can be as high as 0.9. However, this number can be an artifact of starting with a dataset which is disproportionately populated with average wine. 
+
+# Conclusion
+
+The author found that the best predictors of red wine quality are SVM with all 11 predictor variables and Random Forests. However, the combination of PCA with 10 component vectors and SVM gave the predictions with the highest accuracy for the white wine dataset followed by SVM alone. 
+
+High correlations were observed between pairs of variables in the dataset. PCA was done to address this, and although PCA in conjuntion with SVM gave good predictions of wine quality, the PCA approach for this particular dataset was not able to reduce the dimensionality of the problem by much. 
+
+# References
+
+1. P. Cortez, A. Cerdeira, F. Almeida, T. Matos and J. Reis. 2009. Modeling wine preferences by data mining from physicochemical properties. In Decision Support Systems, Elsevier, 47(4):547-553. ISSN: 0167-9236.
+
+
